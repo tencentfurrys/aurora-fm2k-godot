@@ -1,3 +1,11 @@
 # local restore scratch artifacts (not part of the backup layout)
 /_verify_out/
 /_compile_all.log
+
+# raw sprite/sound exports the compiler consumes (kept local only; the
+# compiled runtime data under godot/data is what ships)
+aurora_fm2k/**/img/
+aurora_fm2k/**/snd/
+
+# QA reference extraction strips (kept local only)
+/ref_dark_chocolate/
