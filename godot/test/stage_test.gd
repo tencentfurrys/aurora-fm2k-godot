@@ -4,6 +4,7 @@ extends Node2D
 ## must have its json + standing builtin. Prints STAGE-TEST-PASS/FAIL.
 
 func _ready() -> void:
+	Data.reset_for_tests()
 	var man: Variant = Data.load_json("res://data/manifest.json")
 	var stages: Array = (man.get("stages") if man != null else []) as Array
 	var chars: Array = (man.get("characters") if man != null else []) as Array

@@ -104,6 +104,16 @@ func consume_edges() -> void:
 		if _f - back > 0:
 			_edge[(_f - back) % LEN] = 0
 
+## Drop ALL state (menus call this when a dialog closes so stale held
+## buttons or pended axes can't leak back into combat).
+func reset() -> void:
+	_dir.fill(0)
+	_held.fill(0)
+	_edge.fill(0)
+	_p_dir = 0
+	_p_held = 0
+	_p_edge = 0
+
 # ------------------------------------------------------------ current state
 func axis() -> int:
 	return _at(_dir, _f - 1)

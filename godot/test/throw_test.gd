@@ -19,6 +19,7 @@ var b_freed := false
 var stage1_ok := false
 
 func _ready() -> void:
+	Data.reset_for_tests()
 	p1 = FIGHTER.new()
 	add_child(p1)
 	p1.setup("Applejack", 0)

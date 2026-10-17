@@ -392,6 +392,10 @@ func _play_sound(sound_id: int) -> void:
 
 # --------------------------------------------------------------- state input
 func _poll_idle() -> void:
+	# Training auto-heal: full HP restored whenever the fighter is back to
+	# neutral (the FM2K training options' 'auto healing').
+	if Data.auto_heal and hp > 0.0 and hp < max_hp:
+		hp = max_hp
 	# 1) commands (authored list order = FM2K priority: supers/specials first,
 	#    engine basics Weak/Mid/Heavy last as catch-alls)
 	if _try_launch_command():
@@ -796,7 +800,8 @@ func _is_guarding() -> bool:
 ## victim transitions into the authored wake-up skill instead of standing.
 func enter_reaction(gethit_skill_idx: int) -> void:
 	if gethit_skill_idx == 0 or not skill_by_index.has(gethit_skill_idx):
-		stun_t = 24
+		# plain stun; training auto-tech pops victims out almost immediately
+		stun_t = 4 if Data.auto_tech else 24
 		kd_reaction = false
 		wake_pending = false
 		reaction_name = ""
@@ -807,7 +812,16 @@ func enter_reaction(gethit_skill_idx: int) -> void:
 	_enter_skill(gethit_skill_idx, false)
 	kd_reaction = _is_knockdown_skill(gethit_skill_idx)
 	reaction_name = String(skill_by_index.get(gethit_skill_idx, {}).get("n", ""))
-	state = "HIT"
+	# FM2K training auto-tech: plain hits end the reaction almost immediately
+	# (knockdowns and grabs keep their authored flows and don't tech out).
+	if Data.auto_tech and not kd_reaction:
+		stun_t = 4
+		kd_reaction = false
+		wake_pending = false
+		reaction_name = ""
+		state = "HITSTUN"
+	else:
+		state = "HIT"
 	move = Vector2.ZERO
 	grav = Vector2.ZERO
 

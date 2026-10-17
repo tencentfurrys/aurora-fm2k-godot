@@ -14,6 +14,7 @@ var multitouch := false
 var c_release := false
 
 func _ready() -> void:
+	Data.reset_for_tests()
 	var buf := InputBuffer.new()
 	var tc: Variant = load("res://scripts/touch_controls.gd").new()
 	tc.buf = buf

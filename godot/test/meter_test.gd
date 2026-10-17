@@ -16,6 +16,7 @@ var saw_super := false
 var meter_after := -1.0
 
 func _ready() -> void:
+	Data.reset_for_tests()
 	p1 = FIGHTER.new()
 	add_child(p1)
 	p1.setup("Applejack", 0)

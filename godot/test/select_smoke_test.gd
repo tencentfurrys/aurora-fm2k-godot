@@ -13,6 +13,7 @@ var preview_ok := false
 var roster_ok := false
 
 func _ready() -> void:
+	Data.reset_for_tests()
 	var sc: PackedScene = load("res://scenes/select.tscn")
 	v = sc.instantiate()
 	add_child(v)

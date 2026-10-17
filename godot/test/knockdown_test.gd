@@ -16,6 +16,7 @@ var saw_getup := false
 var saw_stand := false
 
 func _ready() -> void:
+	Data.reset_for_tests()
 	# 1) every fighter that authors knockdown states has an authored wake-up
 	var m: Dictionary = Data.load_json("res://data/manifest.json")
 	var missing: Array[String] = []

@@ -44,6 +44,17 @@ var _kgt_images_cache: Dictionary = {}
 ## F1 debug: draw active FD boxes.
 var show_boxes := false
 
+## Training-menu toggles (the FM2K training options; persisted user-side).
+var auto_tech := false
+var auto_heal := false
+var lo_fi := false
+
+## Headless-test hook: when true, scene exits (pause -> title) are recorded
+## on flags instead of actually changing scenes.
+var suppress_exit := false
+
+const SETTINGS_PATH := "user://aurora_settings.cfg"
+
 func load_json(res_path: String) -> Variant:
 	if _json.has(res_path):
 		return _json[res_path]
@@ -131,16 +142,55 @@ func _parse_wav(b: PackedByteArray) -> AudioStreamWAV:
 ##   godot --path . -- --shot=<path.png> --shot-frame=<n> [--scene=<name>]
 ## The title scene honors --scene= to jump straight to another screen;
 ## headless runs never render, so this is used with windowed binaries.
+## --shot-menu makes the main scene open the training menu, --shot-page=
+## selects which menu page is shown (0 rows / 1 toggles / 2 cards / 3 stage).
 var _shot_path := ""
 var _shot_at := -1
 var _shot_f := 0
+var shot_menu := false
+var shot_page := -1
 
 func _ready() -> void:
+	_load_settings()
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--shot="):
 			_shot_path = a.substr(7)
 		elif a.begins_with("--shot-frame="):
 			_shot_at = int(a.substr(13))
+		elif a == "--shot-menu":
+			shot_menu = true
+		elif a.begins_with("--shot-page="):
+			shot_page = int(a.substr(12))
+
+## Persist the training menu toggles in user:// (desktop and APK both).
+func _load_settings() -> void:
+	var cf := ConfigFile.new()
+	if cf.load(SETTINGS_PATH) != OK:
+		return
+	show_boxes = bool(cf.get_value("training", "debug_button", false))
+	auto_tech = bool(cf.get_value("training", "auto_tech", false))
+	auto_heal = bool(cf.get_value("training", "auto_heal", false))
+	lo_fi = bool(cf.get_value("training", "lo_fi", false))
+
+func save_settings() -> void:
+	var cf := ConfigFile.new()
+	cf.set_value("training", "debug_button", show_boxes)
+	cf.set_value("training", "auto_tech", auto_tech)
+	cf.set_value("training", "auto_heal", auto_heal)
+	cf.set_value("training", "lo_fi", lo_fi)
+	cf.save(SETTINGS_PATH)
+
+## Test helper: wipe persisted training state + the settings file so headless
+## tests start deterministic no matter which order they run in.
+func reset_for_tests() -> void:
+	var dir := DirAccess.open("user://")
+	if dir != null and dir.file_exists(SETTINGS_PATH):
+		dir.remove(SETTINGS_PATH)
+	show_boxes = false
+	auto_tech = false
+	auto_heal = false
+	lo_fi = false
+	suppress_exit = false
 
 func _process(_d: float) -> void:
 	if _shot_at < 0 or _shot_path == "":

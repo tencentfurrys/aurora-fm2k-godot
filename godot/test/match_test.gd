@@ -22,6 +22,7 @@ var saw_cont := false
 var cont_num_seen := -1
 
 func _ready() -> void:
+	Data.reset_for_tests()
 	MAIN.p1_name = "Applejack"
 	MAIN.p2_name = "Rainbow Dash"
 	MAIN.stage_name = "Training Stage"

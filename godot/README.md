@@ -1,4 +1,4 @@
-# Aurora FM2K → Godot bridge (v0.8)
+# Aurora FM2K → Godot bridge (v0.9)
 
 A Godot 4.3+ project that runs Fighting is Magic: Aurora game data extracted
 from the original FM2K (2D Fighter Maker 2002) files, using compiled JSON
@@ -29,19 +29,29 @@ occasionally).
 | I | D button (dodge/counter commands) |
 | F1 | toggle hitbox debug overlay |
 
-Menus (title / character select / victory screen): **Enter** = confirm,
-**Esc** = back, **arrows** = navigate (roster grid + stage cycle). **Esc**
-during a fight opens the pause menu (authored `Pause` word art; Resume /
-Character select). **D** guards on its own now (authored `buttonGuard*`
-poses, same junctions as holding back), and a grabbed victim taps **E**
-inside the connect window to FM2K-throw-break ('Grab Broken', no damage).
-Touch/mouse taps work everywhere (title tap → select; select taps place
-cursors, tap a highlighted tile to confirm, stage halves cycle / middle
-band confirms); the **virtual touch pad** shows automatically on touch
-hardware or via the mouse-emulation setting (F3 toggles). Rounds are
-best-of-3 (first to 2 round wins) with the authored 99-count timer;
-time-out awards the round to whoever has more health. Wins show as
-authored victory marks next to the life gauges.
+Menus (title / character select / continue / victory screen): **Enter** =
+confirm, **Esc** = back, **arrows** = navigate (roster grid + stage cycle).
+**Esc during a fight** opens the authentic **FM2K training/pause menu**
+(rebuilt from the compiled Options dump: cursor column, word-art rows and
+the button-prompt bar): page 1 opens the authored toggles — `debug button:`
+(unlocks the F1 hitbox overlay), `auto teching:` and `auto healing:` (the
+FM2K training options — victims pop out of plain hits / restore HP on the
+return to neutral; both persisted in `user://aurora_settings.cfg`);
+`command list` shows the per-fighter move-card art (Left/Right swaps
+P1/P2); `stage settings` has the authored `lo-fi mode:` row (stage BGM at
+reduced rate/level). In-menu keys: WASD = move (same buffer as the touch
+pad), **J (A)** = confirm/flip, **K (B)** = back or resume, **Esc** from
+the main page = "Return to main menu" per the menu's own prompt bar.
+**D** guards on its own (authored `buttonGuard*` poses, same junctions as
+holding back), and a grabbed victim taps **E** inside the connect window
+to FM2K-throw-break ('Grab Broken', no damage). Touch/mouse taps work
+everywhere (title tap → select; select taps place cursors, tap a
+highlighted tile to confirm, stage halves cycle / middle band confirms);
+the **virtual touch pad** shows automatically on touch hardware or via the
+mouse-emulation setting (F3 toggles). Rounds are best-of-3 (first to 2
+round wins) with the authored 99-count timer; time-out awards the round
+to whoever has more health. Wins show as authored victory marks next to
+the life gauges. Stages now play their own compiled BGM (loops per round).
 
 Hold **back** (away from the opponent) to guard — low guard = back+down,
 air guard = back in mid-air. Blocked hits chip ~20% damage. Connects freeze
@@ -304,12 +314,6 @@ python tools/fm2k_compile.py --char "Luna" --stage "Ponyville"
 
 Source of truth: `..\aurora_fm2k\` (raw `.player` binaries; command rows are
 decoded by the compiler — fm2ndparser's command section is unreliable).
-**Note for fresh clones:** git ships only the *compiled* runtime data;
-the compiler additionally reads the corpus's raw sprite/sound exports
-(`aurora_fm2k/**/img/*.bmp`, `/**/snd/*.wav`) which live on local disk
-only (gitignored — they are ~4.9 GB and duplicate `godot/data` content
-regenerated from them). Regenerating data therefore needs the original
-backup's corpus on disk; the shipped `godot/data` is complete for play.
 
 ## Not yet implemented
 
@@ -317,26 +321,32 @@ backup's corpus on disk; the shipped `godot/data` is complete for play.
   still missing: okizeme timing nuances, down-time escape/roll, wall-bounce
   corner variants that re-launch mid-air after the down hold)
 - Throw/grab connect logic (v0.6: grab connect -> junction `Grabbed` -> toss
-  -> knockdown works; still missing: throw-breaks/escape, neutral-start
-  grab whiff animation handling)
+  -> knockdown; v0.8 adds the FM2K throw break — a victim E tap inside the
+  connect window routes junction 96 'Grab Broken' and aborts the attacker's
+  grab with no damage; still missing: neutral-start grab whiff handling)
 - Hitstop (`stiffTime` freeze v0.6: fixed 10/6-tick freeze on both; per-move
   authored stiffTime values are not in the compiled blocks)
-- Guard/blocking (v0.6: hold-back guard + guard junctions + chip; still
-  missing: guard button builtins, guard-crush meters, block pose details,
-  chip KO (blocked damage currently cannot reduce to KO))
+- Guard/blocking (v0.6: hold-back guard + guard junctions + chip; v0.8 adds
+  the guard-button builtins (hold D); still missing: guard-crush meters,
+  block pose details, chip KO (blocked damage cannot reduce to KO))
 - Meter gating for Level 1/3 super commands (v0.6: authored `settings.meter`
   gauge with 1/3 + full-bar costs; still missing: per-move meter tuning,
   gauge overflow rules, aerial super refs)
 - Title/select/round shell (v0.7+v0.8: full boot flow, announcer chain,
-  first-to-2 rounds + timer + pause menu + touch taps + FM2K continue
-  screen + authored title and select art from the compiled scene dumps;
-  still missing: the dumped screens' full scene *scripts* aren't emulated —
+  first-to-2 rounds + timer + touch taps + FM2K continue screen + authored
+  title and select art from the compiled scene dumps; v0.9 rebuilds the
+  pause menu from the Options dump — training toggles (debug button /
+  auto teching / auto healing, persisted), per-fighter command-list cards,
+  lo-fi stage settings + per-stage BGM playback; still missing: the dumped
+  screens' full scene *scripts* aren't emulated —
   the shell uses their art banks with Godot-native layouts — mouse-free
   cursor keybind display, character-select portraits live in the un-banked
   8191 slot for the mains (the Mane-6 sheet + standing poses stand in),
   and the missing `Ponyville Plaza` stage dump)
-- Mobile APK packaging/export presets (the touch overlay itself shipped in
-  v0.8; `InputBuffer.analog()` shapes the stick vector)
+- Android APK packaging (v0.9 ships an `export_presets.cfg` with the
+  Android preset (arm64, sensor-landscape, package
+  `com.tencentfurrys.aurora`) + the handheld orientation setting; building
+  the APK itself needs the Android build templates installed locally)
 - Air hitstun/juggle physics, palette variants
 
 ## Headless tests
@@ -352,8 +362,26 @@ $godot = "..\Godot_v4.3-stable_win64_console.exe"
 & $godot --headless --path . res://test/match_test.tscn     # v0.7: MATCH-TEST-PASS (+ v0.8 continue stage)
 & $godot --headless --path . res://test/stage_test.tscn     # v0.7: STAGE-TEST-PASS
 & $godot --headless --path . res://test/touch_test.tscn     # v0.8: TOUCH-TEST-PASS
+& $godot --headless --path . res://test/select_smoke_test.tscn # v0.8: SEL-SMOKE-PASS
+& $godot --headless --path . res://test/training_menu_test.tscn # v0.9: TRAIN-MENU-PASS
 & $godot --headless --path . --quit-after 400               # boot smoke (title)
 ```
 
 (Add a new `class_name` script → run `--headless --import` once so the class
 DB picks it up.)
+
+## Building the Android APK
+
+The repo ships `export_presets.cfg` (Android preset: arm64-v8a,
+sensor-landscape, package `com.tencentfurrys.aurora`, version 0.9.0).
+On a machine with the Android SDK + the Godot **Android build templates**
+installed (Editor → Project → Install Android Build Template):
+
+1. Open `godot/` in Godot, then Project → Export… → pick **Android**.
+2. Export the debug APK (default `export/aurora.apk`).
+3. `adb install -r export\aurora.apk` on the device.
+
+The virtual FM2K touch pad is enabled automatically on touch screens; the
+whole menu system (title → select → fight → training menu → continue)
+navigates off the same input buffers the pad feeds. Mouse emulation of
+touch remains available on desktop for testing.

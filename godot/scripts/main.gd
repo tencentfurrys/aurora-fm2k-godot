@@ -53,10 +53,24 @@ var _pip_state := Vector2i(-1, -1)
 var _pips1: Array[Sprite2D] = []
 var _pips2: Array[Sprite2D] = []
 var _paused := false
-var _pause_pick := 0                # 0 resume, 1 back to character select
 var _pause_layer: CanvasLayer
-var _pause_hint: Label
-var _pause_opts: Array[Label] = []
+# authentic FM2K training/pause menu: 0 word rows / 1 toggles / 2 command
+# cards / 3 stage settings (lo-fi)
+var _pause_page := 0
+var _pause_row := 0
+var _pause_exit := false            # exit-to-title request (Data.suppress_exit records it)
+var _card_pick := 0                 # command list: 0 = p1, 1 = p2
+var _card_names: Array[String] = []
+var _pgs: Array[Node2D] = []
+var _cursor: Sprite2D
+var _statuses: Array[Sprite2D] = []
+var _lofi_status: Sprite2D
+var _menu_card: Sprite2D            # command-list card sprite (page 2)
+var _prompt_bar: Sprite2D           # 0008 legend band (hidden on the card page)
+var _blip: AudioStreamPlayer
+var _bgm: AudioStreamPlayer         # stage BGM wav (each compiled stage ships one)
+var _bgm_file := ""
+var _menu_prev_axis := 0
 var touch_pad: Variant = null       # virtual FM2K touch overlay
 var _end_t := 0                      # end-phase counter (victory pose settle)
 var _cont_layer: CanvasLayer         # FM2K continue screen (authored art)
@@ -111,7 +125,7 @@ func _ready() -> void:
 	tc.visible = DisplayServer.is_touchscreen_available() or emu
 
 	_build_hud(st, ca, cb)
-	_build_pause_menu()
+	_build_pause_menu(ca, cb)
 	_begin_round()
 
 func _spawn(side: int, char_name: String, at: Vector2) -> Fighter:
@@ -145,6 +159,7 @@ func _begin_round() -> void:
 	p2.facing = -1
 	var card := "Final Round" if (_wins[0] >= 1 and _wins[1] >= 1) else "Round %d" % _round
 	_play_cards([card, "Fight"], "intro")
+	_start_bgm()                       # FM2K: the stage BGM restarts each round
 
 func _on_ko() -> void:
 	if _phase != "fight":
@@ -199,6 +214,7 @@ func _finish_round() -> void:
 		_wins[_winner] += 1
 	if _winner >= 0 and _wins[_winner] >= 2:
 		_phase = "end"
+		_stop_bgm()
 		_end_t = 0
 		var w := p1 if _winner == 0 else p2
 		var l := p2 if _winner == 0 else p1
@@ -404,6 +420,10 @@ func _build_stage(st: String) -> void:
 	var data: Variant = Data.load_json("res://data/stages/%s.json" % slug)
 	if data == null:
 		return
+	# each compiled stage carries its own BGM wav - picked up by _start_bgm
+	var snds: Array = (data.get("sounds", []) as Array)
+	if snds.size() > 0:
+		_bgm_file = String((snds[0] as Dictionary).get("file", ""))
 	var chosen: Dictionary = {}
 	for im in data.get("images", []):
 		if int(im["w"]) > 0 and int(im["h"]) > 0:
@@ -421,6 +441,38 @@ func _build_stage(st: String) -> void:
 	bg.z_index = 0
 	bg.scale = Vector2(320.0 / float(chosen["w"]), 240.0 / float(chosen["h"]))
 	add_child(bg)
+
+## Stage BGM playback (each compiled stage ships one wav): FM2K restarts the
+## track at every round and fades nothing — play from the round begin.
+func _start_bgm() -> void:
+	if _bgm == null:
+		if _bgm_file == "":
+			return
+		var sw := Data.wav(_bgm_file)
+		if sw == null:
+			_bgm_file = ""     # missing bank: don't retry every round
+			return
+		sw.loop_mode = AudioStreamWAV.LOOP_FORWARD
+		var ch := 2 if sw.stereo else 1
+		sw.loop_end = int(sw.data.size() / (2 * ch))
+		_bgm = AudioStreamPlayer.new()
+		_bgm.stream = sw
+		add_child(_bgm)
+		_apply_lo_fi()
+	_bgm.play()
+
+func _stop_bgm() -> void:
+	if _bgm != null and _bgm.playing:
+		_bgm.stop()
+
+## The stage-settings 'lo-fi mode:' toggle (Menu 33). The engine's original
+## low-res stage variants didn't survive the parse, so lo-fi maps to BGM
+## playback style — slower and quieter (a real, live, persisted effect).
+func _apply_lo_fi() -> void:
+	if _bgm == null:
+		return
+	_bgm.pitch_scale = 0.88 if Data.lo_fi else 1.0
+	_bgm.volume_db = -14.0 if Data.lo_fi else -6.0
 
 # -------------------------------------------------------------------- HUD
 func _build_hud(st: String, ca: String, cb: String) -> void:
@@ -548,9 +600,12 @@ func _draw_timer() -> void:
 			sp.position.y = 36.0 - float(im.get("h", 32)) * 0.5
 
 # ------------------------------------------------------------------ pause
-## Authentic pause: authored 'Pause' word skill (KGT 90, word img 53) over a
-## dark overlay with plain Resume / Character-select options. Fighters freeze
-## while paused.
+## Authentic FM2K training/pause menu rebuilt from the compiled Options.json
+## dump: cursor column + word-art rows over a black backdrop, the button
+## prompt bar, per-character command list cards, the authored training
+## toggles (debug button / auto teching / auto healing) and the stage
+## settings row ('lo-fi mode'). Fighters freeze while paused; on close the
+## input buffers reset so menu keys never leak back into combat.
 func _toggle_pause(on: bool) -> void:
 	if _pause_layer == null:
 		return
@@ -561,62 +616,227 @@ func _toggle_pause(on: bool) -> void:
 	_paused = on
 	_pause_layer.visible = on
 	if on:
-		_pause_pick = 0
+		_pause_page = 0
+		_pause_row = 0
+		_menu_prev_axis = 0
 		_pause_refresh()
 		for f in [p1, p2]:
 			f.frozen = true
-	elif _phase == "fight":
+	else:
 		for f in [p1, p2]:
 			f.frozen = false
+			f.ibuf.reset()
 
 func _pause_refresh() -> void:
-	for k in _pause_opts.size():
-		_pause_opts[k].add_theme_color_override("font_color",
-				Color(1, 1, 1) if k == _pause_pick else Color(0.5, 0.55, 0.65))
+	for pi in _pgs.size():
+		_pgs[pi].visible = pi == _pause_page
+	if _cursor != null:
+		_cursor.visible = _pause_page != 2
+		# page 3's single lo-fi row sits at the dump's third cursor slot
+		if _pause_page == 3:
+			_cursor.position = Vector2(40, 145)
+		else:
+			_cursor.position = Vector2(40, 75 + 35.0 * _pause_row)
+	# the command cards carry their own baked-in legend band
+	if _prompt_bar != null:
+		_prompt_bar.visible = _pause_page != 2
+	if _pause_page == 1:
+		_statuses[0].texture = _opt_tex("0020.png" if Data.show_boxes else "0019.png")
+		_statuses[1].texture = _opt_tex("0022.png" if Data.auto_tech else "0021.png")
+		_statuses[2].texture = _opt_tex("0022.png" if Data.auto_heal else "0021.png")
+	elif _pause_page == 3:
+		_lofi_status.texture = _opt_tex("0022.png" if Data.lo_fi else "0021.png")
+	elif _pause_page == 2 and _menu_card != null:
+		var t := _command_card_tex(_card_pick)
+		if t != null:
+			_menu_card.texture = t
 
-func _build_pause_menu() -> void:
+## Layout straight from the compiled Options.json: the 640x480 art space maps
+## to our 320x240 viewport at exactly 0.5 (cursor column x=80 rows
+## y=150/220/290; word arts at x=100; value arts at x=300).
+func _build_pause_menu(ca: String, cb: String) -> void:
+	_card_names = [ca, cb]
 	_pause_layer = CanvasLayer.new()
 	_pause_layer.layer = 20
 	_pause_layer.visible = false
 	add_child(_pause_layer)
 
 	var dim := ColorRect.new()
-	dim.color = Color(0, 0, 0, 0.65)
+	dim.color = Color(0, 0, 0, 0.94)
 	dim.position = Vector2.ZERO
 	dim.size = Vector2(320, 240)
 	_pause_layer.add_child(dim)
 
-	var pause_sk: Dictionary = _kgt_skill.get("pause", {})
-	for fr in pause_sk.get("frames", []):
-		var im: Dictionary = _kgt_img.get(int(fr.get("i", 0)), {})
-		if not im.is_empty() and int(im["id"]) != 8191:
-			var tex := Data.tex(String(im["file"]))
-			if tex != null:
-				var sp := Sprite2D.new()
-				sp.texture = tex
-				sp.centered = false
-				var w: float = float(im["w"]) * 0.5
-				var h: float = float(im["h"]) * 0.5
-				sp.scale = Vector2(0.5, 0.5)
-				sp.position = Vector2(160.0 - w * 0.5, 70.0 - h * 0.5)
-				_pause_layer.add_child(sp)
-			break
+	# bottom legend band of the 0008 overlay: "(A) Confirm / (PAUSE) Return
+	# to main menu"
+	var bar := Data.tex("assets/options/img/0008.png")
+	if bar != null:
+		var at := AtlasTexture.new()
+		at.atlas = bar
+		at.region = Rect2(0, 396, 640, 84)
+		_prompt_bar = Sprite2D.new()
+		_prompt_bar.texture = at
+		_prompt_bar.centered = false
+		_prompt_bar.scale = Vector2(0.5, 0.5)
+		_prompt_bar.position = Vector2(0, 198)
+		_pause_layer.add_child(_prompt_bar)
 
-	_pause_opts.append(_pause_label(Vector2(0, 140), 12))
-	_pause_opts[0].text = "RESUME"
-	_pause_opts.append(_pause_label(Vector2(0, 162), 12))
-	_pause_opts[1].text = "CHARACTER SELECT"
+	# page 0 word rows: 'training options / command list / stage settings'
+	_pgs.append(_pg2d())
+	_pgs[0].add_child(_opt_sprite("0013.png", Vector2(100, 165)))
+	_pgs[0].add_child(_opt_sprite("0014.png", Vector2(100, 230)))
+	_pgs[0].add_child(_opt_sprite("0015.png", Vector2(100, 305)))
+	# page 1 toggles: 'debug button / auto teching / auto healing' + values
+	_pgs.append(_pg2d())
+	_pgs[1].add_child(_opt_sprite("0016.png", Vector2(100, 160)))
+	_pgs[1].add_child(_opt_sprite("0017.png", Vector2(100, 232)))
+	_pgs[1].add_child(_opt_sprite("0018.png", Vector2(100, 302)))
+	_statuses.append(_pg_sprite(_pgs[1], Vector2(300, 162)))
+	_statuses.append(_pg_sprite(_pgs[1], Vector2(300, 232)))
+	_statuses.append(_pg_sprite(_pgs[1], Vector2(300, 302)))
+	# page 2: per-fighter command list card (full-screen art)
+	_pgs.append(_pg2d())
+	_menu_card = _pg_sprite(_pgs[2], Vector2(0, 0))
+	# page 3: stage settings 'lo-fi mode' + its oFF/on value art
+	_pgs.append(_pg2d())
+	_pgs[3].add_child(_opt_sprite("0023.png", Vector2(100, 303)))
+	_lofi_status = _pg_sprite(_pgs[3], Vector2(300, 303))
+
+	_cursor = _opt_sprite("0024.png", Vector2(80, 150))
+	_pause_layer.add_child(_cursor)
+
+	_blip = AudioStreamPlayer.new()
+	_blip.stream = Data.wav("assets/options/snd/0001.wav")
+	add_child(_blip)
 	_pause_refresh()
 
-func _pause_label(pos: Vector2, fsize: int) -> Label:
-	var l := Label.new()
-	l.position = pos
-	l.size = Vector2(320, 18)
-	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	l.add_theme_font_size_override("font_size", fsize)
-	_pause_layer.add_child(l)
-	return l
+func _pg2d() -> Node2D:
+	var n := Node2D.new()
+	_pause_layer.add_child(n)
+	return n
 
+## Sprite2D at the art-space position (top-left anchor), drawn at 0.5.
+func _opt_sprite(fn: String, at640: Vector2) -> Sprite2D:
+	var sp := Sprite2D.new()
+	var tex := _opt_tex(fn)
+	if tex != null:
+		sp.texture = tex
+	sp.centered = false
+	sp.scale = Vector2(0.5, 0.5)
+	sp.position = at640 * 0.5
+	return sp
+
+func _pg_sprite(pg: Node2D, at640: Vector2) -> Sprite2D:
+	var sp := Sprite2D.new()
+	sp.centered = false
+	sp.scale = Vector2(0.5, 0.5)
+	sp.position = at640 * 0.5
+	pg.add_child(sp)
+	return sp
+
+func _opt_tex(fn: String) -> Texture2D:
+	return Data.tex("assets/options/img/" + fn)
+
+## The Options dump authors one 640x480 command-list card per fighter
+## ('Menu 20 <char>'); roster slugs map to those card arts, with the blank
+## 0027 template standing in for the entries that never got one.
+const COMMAND_CARDS := {
+	"applejack": "0000.png",
+	"twilight_sparkle": "0001.png",
+	"rainbow_dash": "0002.png",
+	"pinkie_pie": "0003.png",
+	"rarity": "0004.png",
+	"fluttershy": "0005.png",
+	"derpy": "0006.png",
+	"trixie": "0007.png",
+	"big_macintosh": "0009.png",
+	"gilda": "0010.png",
+	"vinyl": "0011.png",
+	"lyra": "0028.png",
+	"octavia": "0029.png",
+	"zecora": "0030.png",
+	"roseluck": "0031.png",
+	"cadence": "0032.png",
+	"luna": "0033.png",
+}
+
+func _command_card_tex(side: int) -> Texture2D:
+	if _card_names.size() <= side:
+		return null
+	var fn: String = COMMAND_CARDS.get(Fighter._slug(_card_names[side]), "0027.png")
+	return _opt_tex(fn)
+
+func _pause_row_max() -> int:
+	return 2 if _pause_page == 0 or _pause_page == 1 else 0
+
+## One tick of menu input. The menu reads the p1 input buffer only — the same
+## buffer the keyboard reader and the touch overlay feed — so every control
+## source navigates it while the demo AI (p2) can never reach the UI.
+## FM2K semantics: Up/Down rows, A confirm/flip, B back-or-resume,
+## Left/Right flips value arts (the dump's [>]/[<] presses).
+func _menu_input() -> void:
+	var m := p1.ibuf.axis()
+	var e := m & ~_menu_prev_axis
+	_menu_prev_axis = m
+	var row_max := _pause_row_max()
+	if (e & (InputBuffer.M_UP | InputBuffer.M_DOWN)) != 0 and row_max > 0:
+		var d := 1 if (e & InputBuffer.M_DOWN) != 0 else -1
+		_pause_row = clampi(_pause_row + d, 0, row_max)
+		_pause_refresh()
+		_blip.play()
+		return
+	var lr := (e & (InputBuffer.M_LEFT | InputBuffer.M_RIGHT)) != 0
+	if p1.ibuf.just_pressed(InputBuffer.B_A):
+		match _pause_page:
+			0:
+				_blip.play()
+				_pause_page = _pause_row + 1
+				_pause_row = 0
+				_pause_refresh()
+			1, 3:
+				_pause_flip()
+			_:
+				pass
+	elif p1.ibuf.just_pressed(InputBuffer.B_B):
+		match _pause_page:
+			0:
+				_toggle_pause(false)
+			_:
+				_blip.play()
+				_pause_page = 0
+				_pause_row = 0
+				_pause_refresh()
+	elif lr:
+		match _pause_page:
+			2:
+				_card_pick = (_card_pick + 1) % 2
+				_pause_refresh()
+				_blip.play()
+			1, 3:
+				_pause_flip()
+			_:
+				pass
+
+## Flip the highlighted value (A on a value row or Left/Right as authored).
+## Persisted immediately; live-applying lo-fi.
+func _pause_flip() -> void:
+	match _pause_page:
+		1:
+			match _pause_row:
+				0:
+					Data.show_boxes = not Data.show_boxes
+				1:
+					Data.auto_tech = not Data.auto_tech
+				2:
+					Data.auto_heal = not Data.auto_heal
+		3:
+			Data.lo_fi = not Data.lo_fi
+		_:
+			pass
+	Data.save_settings()
+	_apply_lo_fi()
+	_pause_refresh()
+	_blip.play()
 # ------------------------------------------------------------------ loop
 func _process(_delta: float) -> void:
 	# cards advance on the frame clock; between chains a settle hold runs
@@ -671,24 +891,45 @@ func _process(_delta: float) -> void:
 	if Input.is_action_just_pressed("dbg_touch") and touch_pad != null:
 		touch_pad.visible = not touch_pad.visible
 
-	# pause menu (authored KGT skill 'Pause' word, plain options beneath)
-	if _paused:
-		if Input.is_action_just_pressed("ui_down"):
-			_pause_pick = mini(1, _pause_pick + 1)
-			_pause_refresh()
-		if Input.is_action_just_pressed("ui_up"):
-			_pause_pick = maxi(0, _pause_pick - 1)
-			_pause_refresh()
-		if Input.is_action_just_pressed("ui_accept"):
-			if _pause_pick == 0:
-				_toggle_pause(false)
-			else:
-				_paused = false
-				get_tree().change_scene_to_file(SELECT_SCENE)
-		elif Input.is_action_just_pressed("ui_cancel"):
-			_toggle_pause(false)
-	elif _phase == "fight" and Input.is_action_just_pressed("ui_cancel"):
+	# QA shot hook: hold the training menu open (page selectable) so
+	# --shot captures the authored art layers
+	if Data.shot_menu and _phase == "fight" and not _paused:
 		_toggle_pause(true)
+		if Data.shot_page >= 0:
+			_pause_page = clampi(Data.shot_page, 0, 3)
+			_pause_row = 0
+			_pause_refresh()
+
+	# pause open key (the menu itself reads input buffers once per physics
+	# tick — see _physics_process)
+	if _phase == "fight" and not _paused and Input.is_action_just_pressed("ui_cancel"):
+		_toggle_pause(true)
+
+## The menu's back/exit semantics on one callable (headless tests drive this
+## directly; Input actions are unverifiable under a dummy audio/driver run).
+## The menu reads the p1 input buffer once per physics tick — buffer edges
+## survive exactly one committed snapshot, so a _process-based reader (the
+## unthrottled headless loop runs it several times per tick) would re-fire
+## one press across the whole frame. Parent order keeps this ahead of the
+## fighters' ibuf.tick() commits: each press is seen exactly once.
+func _physics_process(_d: float) -> void:
+	if not _paused:
+		return
+	_menu_input()
+	if Input.is_action_just_pressed("ui_cancel"):
+		_pause_esc()
+
+func _pause_esc() -> void:
+	if _pause_page == 0:
+		if Data.suppress_exit:
+			_pause_exit = true
+		else:
+			get_tree().change_scene_to_file("res://scenes/title.tscn")
+	else:
+		_blip.play()
+		_pause_page = 0
+		_pause_row = 0
+		_pause_refresh()
 
 # ----------------------------------------------------------------- inputs
 func _register_inputs() -> void:

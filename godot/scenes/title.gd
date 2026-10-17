@@ -31,7 +31,7 @@ func _ready() -> void:
 
 	_blink = _label(layer, "press ENTER", Vector2(0, 206), 12, Color(1, 1, 1), Vector2(320, 18))
 	_blink.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_label(layer, "FM2K -> Godot bridge   |   v0.8", Vector2(6, 228), 7, Color(0.42, 0.46, 0.54), Vector2(320, 10))
+	_label(layer, "FM2K -> Godot bridge   |   v0.9", Vector2(6, 228), 7, Color(0.42, 0.46, 0.54), Vector2(320, 10))
 
 func _process(delta: float) -> void:
 	_t += delta

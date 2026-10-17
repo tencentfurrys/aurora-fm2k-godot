@@ -17,6 +17,7 @@ var saw_btn_pose := false
 var saw_btn_guard := false
 
 func _ready() -> void:
+	Data.reset_for_tests()
 	p1 = FIGHTER.new()
 	add_child(p1)
 	p1.setup("Applejack", 0)
