@@ -89,18 +89,15 @@ jobs:
         run: |
           TPL="$HOME/.local/share/godot/export_templates/4.3.stable"
           mkdir -p godot/android/build
-          # 4.3 supports a CLI installer; try it first
-          ~/godot-ci/Godot_v4.3-stable_linux.x86_64 --headless --path godot \
-            --install-android-build-template 2>&1 | tail -3 || true
-          if [ ! -f godot/android/build/build.gradle ]; then
-            echo "CLI installer did not produce the template; extracting android_source.zip manually"
-            rm -rf /tmp/astpl && mkdir -p /tmp/astpl
-            unzip -q -o "$TPL/android_source.zip" -d /tmp/astpl
-            SRC=$(find /tmp/astpl -maxdepth 2 -name build.gradle -printf '%h\n' | head -1)
-            echo "gradle root: $SRC"
-            cp -a "$SRC"/. godot/android/build/
+          # manual install: extract the template's gradle project sources
+          # (the --install-android-build-template CLI flag is 4.4+; in 4.3
+          # the editor hangs headless with it)
+          unzip -q -o "$TPL/android_source.zip" -d godot/android/build
+          # handle either zip root: files at root, or nested under build/
+          if [ ! -f godot/android/build/build.gradle ] && [ -f godot/android/build/build/build.gradle ]; then
+            mv godot/android/build/build/* godot/android/build/
           fi
-          ls -la godot/android/build | head -20
+          ls godot/android/build | head -20
           test -f godot/android/build/build.gradle || { echo "gradle template missing"; exit 1; }
 
       - name: Import project (full pass - assets become importable resources)
