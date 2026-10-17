@@ -304,6 +304,12 @@ python tools/fm2k_compile.py --char "Luna" --stage "Ponyville"
 
 Source of truth: `..\aurora_fm2k\` (raw `.player` binaries; command rows are
 decoded by the compiler — fm2ndparser's command section is unreliable).
+**Note for fresh clones:** git ships only the *compiled* runtime data;
+the compiler additionally reads the corpus's raw sprite/sound exports
+(`aurora_fm2k/**/img/*.bmp`, `/**/snd/*.wav`) which live on local disk
+only (gitignored — they are ~4.9 GB and duplicate `godot/data` content
+regenerated from them). Regenerating data therefore needs the original
+backup's corpus on disk; the shipped `godot/data` is complete for play.
 
 ## Not yet implemented
 
