@@ -1,0 +1,3 @@
+# local restore scratch artifacts (not part of the backup layout)
+/_verify_out/
+/_compile_all.log
