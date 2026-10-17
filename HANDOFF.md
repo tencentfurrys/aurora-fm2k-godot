@@ -1,13 +1,40 @@
-# Handoff — Aurora FM2K→Godot fidelity fixes (v0.9.x iteration)
+# Handoff — Aurora port → ORIGINAL ENGINE path
 
-Continue-context for the Android debug-APK fidelity work. Branch `main`, repo
-`tencentfurrys/aurora-fm2k-godot`. Written 2026‑10‑17 after the black-key /
-sprite-scale / stage-layer round.
+Continue-context. Branch `main`, repo `tencentfurrys/aurora-fm2k-godot`.
+Written 2026‑10‑17. **User's strategic call after the round below:** iterating
+the Godot port by guess-and-capture has no trail to follow — the original
+FM2K engine is the only source of truth, and it never ran on this VM (the
+stock exe hangs without a display path), so every fidelity decision in the
+port had to be reverse-engineered from recordings. The continuation moves to
+the **original engine**: run it where it works, RE exactly what it does, and
+treat this Godot round‑1 as archived findings, not a roadmap.
 
-## Goal
-Make the ported APK match the original FM2K Aurora PC look, guided by the two
-recordings in the user's Downloads folder (reference gameplay of the stock
-build vs a recording of the shipped v0.9 APK).
+## The forward path — the original engine
+1. **Run the original build on Android — the Aurora team's own published
+   route.** `WindowsLogic-Productions/FiM-Aurora-Winlator-Resources` and
+   their `WindowsLogic-Productions/winlator` fork exist to run Fighting is
+   Magic: Aurora on Android devices (Wine/Box64); MorningStar is their
+   netplay client. If the goal is fidelity art/behavior, the original engine
+   running on-device is fidelity by construction — no port needed.
+2. **RE the engine's render/semantic math** so any future renderer (Godot
+   included) copies facts, not guesses. Start points:
+   - `Armonte/wanwan` — cloned to `D:\tools\wanwan` on this VM. FM2K
+     rollback suite; `docs/analysis/fm2k_object_system.md` maps engine state
+     incl. `camera_manager` @ `0x40AF30`. Covers combat state, not the stage
+     draw path — but the memory maps anchor a proper disassembly session
+     (the draw path is FM2K's display code; wanwan kept the stock renderer,
+     which is *why* it lacks draw semantics).
+   - FM2K rollback Launcher lineage (supercombo.gg writeup) + giuroll docs
+     (`wanwan/docs/giuroll.md`) for input/state semantics.
+   - `WindowsLogic-Productions/2DFM2NDRL` — mirror of AI-generated code
+     (topics: ai-generated, stolen-code) — **untrusted reference only**.
+3. **Get FM2K running anywhere as an oracle.** Windows PC with a GPU (the
+   user's reference video was recorded on one), or CncDDraw-style wrappers
+   (`wanwan` ships `FM2K_CncDDraw_DefaultIni.inc`). Once it runs, every open
+   visual question (parallax anchor sign, `moves` timing/wrap, camera anchor,
+   sprite scale) becomes one capture away.
+
+## Round 1 status (Godot fidelity port — parked, findings below are the seed)
 
 ## What changed in this commit
 1. **`godot/scripts/data.gd` — palette-0 black keying on BOTH load paths.**
@@ -51,7 +78,7 @@ build vs a recording of the shipped v0.9 APK).
 6. **`godot/data/stage_parallax.json`** — `{stage_slug: {skill_name: [w, h]}}`
    (+ harmless character-skill pollution, 188 KB).
 
-## ⚠ Known open bug — top priority on resume
+### ⚠ Known open bug — only blocks the Godot round (seed note)
 The most recent PC captures (`D:\tools\pc-capture\main-t16.png` = Training
 Stage @16 s, `main-t10/t18` = Discord's Ponyville) show **stage art ~3× over-
 magnified** (single wall tiles / one playing card fill the view; fighters not
@@ -81,7 +108,7 @@ reach 20 s stamps; kill stray `Godot*` processes between retries.
 - `C:\Users\RDP\Downloads\fim-gameplay.mp4` (reference) and
   `2026_10_17_19_22_15.mp4` (APK).
 
-## Defects still to fix (from the user's APK recording)
+## Round-1 defect backlog (Godot port — kept for its own sake)
 - **Select screen**: overlapping roster labels ("Rainbow DasFluttershy",
   "Big MaciGilda"), broken hex masks (black rectangles behind portrait
   hexes), giant green Ponyville stage preview covering the hex grid,
@@ -94,17 +121,18 @@ reach 20 s stamps; kill stray `Godot*` processes between retries.
   (pre-existing v0.9 quirk; visuals now agree at ×0.5 but box-vs-sprite
   fidelity is `tools/box_convention.py` territory).
 
-## Engine-truth research lead (paused mid-way)
-Parallax weights (skill `Settings.width/height`) were recovered from the FM2K
-parser dumps — but the exact *draw-time* semantics (camera anchor, `moves`
-timing, wrap) are still inferred. Rejected for now (won't run on this VM):
-stock `FightingIsMagic.exe` hangs. Cloned `Armonte/wanwan` (FM2K rollback
-suite, `D:\tools\wanwan`) — it reimplements combat *state*, not the stage
-draw path. Next leads if the visual bugs resist bisection: fm2k-again style
-reimplementations, FM2K_Rollback docs, CncDDraw-era display hooks, FIM
-community engine notes.
+## Engine RE lead — superseded by "The forward path" above (kept as-is)
 
-## Android rebuild + upload (only once captures look right)
+The parallax weights (skill `Settings.width/height`) were recovered from the
+FM2K parser dumps this round and remain valid observations. The exact
+*draw-time* semantics (camera anchor, `moves` timing, wrap) are still
+inferred — that is precisely the "no trail" problem the original-engine path
+eliminates. Context: stock `FightingIsMagic.exe` hangs on this VM; `Armonte/
+wanwan` (cloned to `D:\tools\wanwan`) reimplements combat *state*, not the
+stage draw path. Remaining leads: fm2k-again style reimplementations,
+FM2K_Rollback docs, CncDDraw-era display hooks, FIM community engine notes.
+
+## Godot APK rebuild + upload (only if the port resumes)
 Re-export the debug APK exactly as for v0.9.0 (keystore lines above, absolute
 output path `godot/export/aurora-v0.9.0-debug.apk`), verify with
 `aapt` / `apksigner` / archive listing, then:
