@@ -1,4 +1,4 @@
-# Aurora FM2K → Godot bridge (v0.6)
+# Aurora FM2K → Godot bridge (v0.8)
 
 A Godot 4.3+ project that runs Fighting is Magic: Aurora game data extracted
 from the original FM2K (2D Fighter Maker 2002) files, using compiled JSON
@@ -10,9 +10,11 @@ produced by `tools/fm2k_compile.py`.
 2. Open this folder (`godot/`) as a project in Godot.
 3. Press F5 (Run Project).
 
-The game boot scene loads `data/manifest.json` → first two characters vs each
-other on the first compiled stage. P2 runs a small demo brain that feeds the
-same input buffer a human uses (walks, jumps back and forth, attacks
+Pressing F5 boots the **title screen** → **character select** (pick P1, then
+P2, then a stage from the 27 compiled stages) → the fight. The fight scene
+can also be booted directly: empty parameters load `data/manifest.json` →
+first two characters vs each other, P2 running a small demo brain that feeds
+the same input buffer a human uses (walks, jumps back and forth, attacks
 occasionally).
 
 ## Controls (P1)
@@ -26,7 +28,20 @@ occasionally).
 | U | E button (grabs: `Right + E`) |
 | I | D button (dodge/counter commands) |
 | F1 | toggle hitbox debug overlay |
-| R | reset round after K.O. |
+
+Menus (title / character select / victory screen): **Enter** = confirm,
+**Esc** = back, **arrows** = navigate (roster grid + stage cycle). **Esc**
+during a fight opens the pause menu (authored `Pause` word art; Resume /
+Character select). **D** guards on its own now (authored `buttonGuard*`
+poses, same junctions as holding back), and a grabbed victim taps **E**
+inside the connect window to FM2K-throw-break ('Grab Broken', no damage).
+Touch/mouse taps work everywhere (title tap → select; select taps place
+cursors, tap a highlighted tile to confirm, stage halves cycle / middle
+band confirms); the **virtual touch pad** shows automatically on touch
+hardware or via the mouse-emulation setting (F3 toggles). Rounds are
+best-of-3 (first to 2 round wins) with the authored 99-count timer;
+time-out awards the round to whoever has more health. Wins show as
+authored victory marks next to the life gauges.
 
 Hold **back** (away from the opponent) to guard — low guard = back+down,
 air guard = back in mid-air. Blocked hits chip ~20% damage. Connects freeze
@@ -38,6 +53,67 @@ P2 uses arrow keys + Numpad 1/2/3 (A/B/C) and Numpad 4/5 (D/E).
 All buttons are edge-triggered through the command matcher: a plain press
 plays the basic, motion+button inputs launch specials/supers (e.g.
 `Down, Down-Right, Right + A` = Applebuck, `Right+Right` = dash).
+
+## What's new in v0.8 — touch overlay, authenticity pass, engine details
+
+- **Virtual FM2K touch pad** (`scripts/touch_controls.gd`): left d-pad stick
+  + the five-button arcade arc, feeding the same `InputBuffer` as a keyboard
+  (8-way axis through `InputBuffer.analog`, press/release edges) — the
+  mobile-APK target input. Auto-shows on touch devices or mouse-emulation
+  installs; F3 toggles; `emulate_touch_from_mouse` is on in project
+  settings so desktops can play it with the mouse. Title/select gained
+  touch taps (tile-tap-to-confirm; stage halves cycle).
+- **Authentic menus**: the compiled scene dumps now feed the shell — the
+  *real* MLP: Fighting Is Magic Aurora title art drives the title screen and
+  the character-select backdrop; the select grid uses the authored
+  per-fighter select tiles (50×44) from the "Character Select" dump, with
+  the six mains sliced out of the authored Mane-6 sheet (2×3 atlas), plus
+  the select screen's own logo. Demo bank compiled to `data/demos/`
+  (Credits, Continue, Options, Epilogue, Character Select, Title).
+- **Guard button (D)**: authored `buttonGuardStand/Crouch/Air` builtins
+  carry the pose; on guard it resolves the same junction rows as holding
+  back — hold-back guard coexists (stand/back-walk, low, air).
+- **Throw break (FM2K)**: a grabbed victim tapping the grab button **E**
+  within the connect window escapes via junction 96 `Grab Broken` (all 20
+  fighters carry it) — toss never happens, no damage, attacker cut back to
+  neutral. Headless regressions: `touch_test` (stick axis + edges +
+  multi-finger), `guard_test` stage 2 (button guard), `throw_test` stage 2
+  (break window), `match_test` stage 2 (continue screen boot + rematch).
+- **Continue screen (v0.8)**: lose the demo-AI match and the authentic
+  "Don't give up now!" art takes over with the FM2K 9-count — Enter/tap =
+  YES (full rematch, Round 1 again), Esc/timeout = NO (game over back to
+  the title), with the dump's own voice clip.
+
+## What's new in v0.7 — game shell: title, character select, round flow
+
+The whole shell is data-driven off the **authored KGT UI bank** (`kgt.json`,
+226 named skills — screens, HUD kit, announcer cards, voice clips):
+
+- **Boot flow**: `scenes/title.tscn` (hex backdrop img 2000 + authored K.O.
+  plaque img 22) → `scenes/select.tscn` — portraits come from each fighter's
+  authored `charSelectPic` (fallback: standing pose frame where the select
+  art lives in the un-banked 8191 image slot) — pick P1, pick P2, pick any
+  of **27 compiled stages** (the full stage roster in the corpus; the
+  `Ponyville Plaza` parse dump is missing from the backup, it stays out) →
+  fight. The fight scene takes picks via static params and falls back to the
+  manifest demo boot.
+- **Round/match flow**: fighters are round-flow locked through the announcer
+  chain and thaw exactly on the `Fight` card: `Round N` / `Final Round` (the
+  FM2K card set, imgs 281–310) → `Fight` (imgs 276–279) → on stoppage
+  `Knock Out` / `Double Knock Out` (+ `Perfect` when the winner took no
+  damage) → `1P Wins` / `2P Wins` / `Draw` → next round or match end with the
+  winner playing its own authored **Victory** builtin on the loser's loss
+  pose. FM2K rules: first to 2 rounds, plus the authored 99-count round timer
+  with its digit images (239–248) and a `TIME'S UP` hp-tiebreak.
+- **Authentic HUD**: authored life gauge art (imgs 130/131) over health
+  fills, spirit gauge fills, and the authored victory marks (imgs 132/133)
+  as round-win pips. Announcer voice clips (Round/Fight/Perfect/Draw) play
+  from the authored sound events.
+- **Pause menu**: Esc during a fight freezes both fighters over the authored
+  `Pause` word skill with Resume / Character-select options.
+- Headless regressions: `match_test` drives the real main scene through two
+  KOs end-to-end (cards, reset, wins, victory pose); `stage_test` proves the
+  whole compiled roster renders (27 stages + 21 fighters, json → PNG).
 
 ## What's new in v0.6 — guard, throws, hitstop, spirit gauge
 
@@ -245,9 +321,17 @@ decoded by the compiler — fm2ndparser's command section is unreliable).
 - Meter gating for Level 1/3 super commands (v0.6: authored `settings.meter`
   gauge with 1/3 + full-bar costs; still missing: per-move meter tuning,
   gauge overflow rules, aerial super refs)
-- Virtual touch overlay: speaks `manual_input` + `InputBuffer` (the mobile
-  APK target); `InputBuffer.analog()` already shapes a stick vector
-- Air hitstun/juggle physics, palette variants, rounds/match flow
+- Title/select/round shell (v0.7+v0.8: full boot flow, announcer chain,
+  first-to-2 rounds + timer + pause menu + touch taps + FM2K continue
+  screen + authored title and select art from the compiled scene dumps;
+  still missing: the dumped screens' full scene *scripts* aren't emulated —
+  the shell uses their art banks with Godot-native layouts — mouse-free
+  cursor keybind display, character-select portraits live in the un-banked
+  8191 slot for the mains (the Mane-6 sheet + standing poses stand in),
+  and the missing `Ponyville Plaza` stage dump)
+- Mobile APK packaging/export presets (the touch overlay itself shipped in
+  v0.8; `InputBuffer.analog()` shapes the stick vector)
+- Air hitstun/juggle physics, palette variants
 
 ## Headless tests
 
@@ -259,7 +343,10 @@ $godot = "..\Godot_v4.3-stable_win64_console.exe"
 & $godot --headless --path . res://test/guard_test.tscn     # v0.6: GUARD-TEST-PASS
 & $godot --headless --path . res://test/meter_test.tscn     # v0.6: METER-TEST-PASS
 & $godot --headless --path . res://test/throw_test.tscn     # v0.6: THROW-TEST-PASS
-& $godot --headless --path . --quit-after 400               # boot smoke
+& $godot --headless --path . res://test/match_test.tscn     # v0.7: MATCH-TEST-PASS (+ v0.8 continue stage)
+& $godot --headless --path . res://test/stage_test.tscn     # v0.7: STAGE-TEST-PASS
+& $godot --headless --path . res://test/touch_test.tscn     # v0.8: TOUCH-TEST-PASS
+& $godot --headless --path . --quit-after 400               # boot smoke (title)
 ```
 
 (Add a new `class_name` script → run `--headless --import` once so the class

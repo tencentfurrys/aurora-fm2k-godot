@@ -12,6 +12,9 @@ var p2: Fighter
 var saw_guard := false
 var saw_stiff := false
 var guard_hp := -1.0
+var stage1_ok := false
+var saw_btn_pose := false
+var saw_btn_guard := false
 
 func _ready() -> void:
 	p1 = FIGHTER.new()
@@ -57,10 +60,29 @@ func _physics_process(_d: float) -> void:
 	if t == 600:
 		var loss := p2.max_hp - p2.hp
 		# unguarded weak A = 56 dmg (FA pw 7 x 8); guard chip = ~20% -> ~11
+		stage1_ok = saw_guard and saw_stiff and loss > 3.0 and loss < 30.0 \
+				and p1.hp >= p1.max_hp and not p2.ko
 		print("GUARD RESULT: saw_guard=", saw_guard, " saw_stiff=", saw_stiff,
 				" chip_loss=", lossf(loss))
-		if saw_guard and saw_stiff and loss > 3.0 and loss < 30.0 and p1.hp >= p1.max_hp \
-				and not p2.ko:
+		# stage 2: FM2K D-button guard (pose + block with no back-hold)
+		p2.ibuf.set_axis(0)
+		p2.ibuf.press(InputBuffer.B_D)
+		p2.hp = p2.max_hp
+	if t == 640:
+		saw_btn_pose = p2._cur_key == "buttonGuardStand" and p2._is_guarding()
+	if t == 662:
+		p1.ibuf.press(InputBuffer.B_A)
+		p1.pos.x = p2.pos.x - 50.0
+	if t >= 660 and not saw_btn_guard and p2.state == "HIT":
+		var sk2: Dictionary = p2.skill_by_index.get(p2.skill_idx, {})
+		if String(sk2.get("n", "")).begins_with("Guard"):
+			saw_btn_guard = true
+	if t == 1000:
+		var btn_loss := p2.max_hp - p2.hp
+		print("GUARD-BTN RESULT: pose=", saw_btn_pose, " guard=", saw_btn_guard,
+				" chip_loss=", lossf(btn_loss))
+		if stage1_ok and saw_btn_pose and saw_btn_guard \
+				and btn_loss > 3.0 and btn_loss < 30.0 and not p2.ko:
 			print("GUARD-TEST-PASS")
 		else:
 			print("GUARD-TEST-FAIL")

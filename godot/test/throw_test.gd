@@ -13,6 +13,10 @@ var p2: Fighter
 var saw_grab_skill := false
 var saw_grabbed := false
 var saw_stand := false
+var b_connect := false
+var b_broken := false
+var b_freed := false
+var stage1_ok := false
 
 func _ready() -> void:
 	p1 = FIGHTER.new()
@@ -63,11 +67,42 @@ func _physics_process(_d: float) -> void:
 			saw_stand = true
 			print("TEST: thrown victim recovered to standing (t=", t, ")")
 	if t == 950:
+		stage1_ok = saw_grab_skill and saw_grabbed and saw_stand \
+				and p1.hp >= p1.max_hp and not p2.ko
 		print("THROW RESULT: grab=", saw_grab_skill, " grabbed=", saw_grabbed,
 				" stand=", saw_stand, " p1.hp=", p1.hp, " p2.hp=", p2.hp,
 				" p2.ko=", p2.ko)
-		if saw_grab_skill and saw_grabbed and saw_stand \
-				and p1.hp >= p1.max_hp and not p2.ko:
+		# stage 2: FM2K throw break — the victim taps E inside the connect
+		# window and the toss never happens
+		p2.manual_input = true
+		p2.hp = p2.max_hp
+		p1.pos.x = p2.pos.x - 33.0
+	if t == 952:
+		p1.ibuf.set_axis(InputBuffer.M_RIGHT)
+		p1.ibuf.press(InputBuffer.B_E)
+	if t == 954:
+		p1.ibuf.set_axis(0)
+	if t >= 950 and not b_connect and p2.break_t > 0:
+		b_connect = true
+		print("TEST: grab connect (t=", t, ") break window armed; tapping E")
+		p2.ibuf.press(InputBuffer.B_E)
+	if t >= 950 and b_connect and not b_broken and p2.state == "HIT":
+		var sk2: Dictionary = p2.skill_by_index.get(p2.skill_idx, {})
+		if String(sk2.get("n", "")).begins_with("Grab Bro"):
+			b_broken = true
+			print("TEST: victim 'Grab Broken' escape (t=", t, ")")
+	if t >= 950 and b_connect and not b_freed and p1.state == "IDLE" \
+			and p1._cur_key == "standing":
+		b_freed = true
+	if t == 1300:
+		var hp_same := p2.hp == p2.max_hp
+		var stand_again := p2.state == "IDLE" and p2._cur_key == "standing" \
+				and not p2.airborne
+		print("THROW-BRK RESULT: connect=", b_connect, " broken=", b_broken,
+				" freed=", b_freed, " no_dmg=", hp_same, " stand=", stand_again,
+				" p2.ko=", p2.ko)
+		if stage1_ok and b_connect and b_broken and b_freed and hp_same \
+				and stand_again and not p2.ko:
 			print("THROW-TEST-PASS")
 		else:
 			print("THROW-TEST-FAIL")

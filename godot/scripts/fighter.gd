@@ -61,11 +61,16 @@ const HITSTOP_TICKS := 10              # stiffTime freeze on connect (not author
 const HITSTOP_GUARD := 6               # shorter freeze when the hit is blocked
 const THROW_JUNCTION := 95             # FM2K engine layout: thrown victims play
                                        # junction 95 'Grabbed' across the roster
+const THROW_BREAK_JUNCTION := 96       # victim-side escape skill ('Grab Broken')
+const THROW_BREAK_TICKS := 14          # E-tap window after the grab connects
 var meter := 0.0                       # super gauge 0..meter_max (settings.meter)
 var meter_max := 1.0
 var stiff_t := 0                       # hitstop: this fighter is frozen n ticks
+var frozen := false                    # round-flow lock (announcer cards/reset)
+var break_t := 0                       # throw-break window (ticks; victim E tap)
 var _cmd_costs: Array[float] = []      # per authored command row: super meter cost
-var ai := false                        # P2 demo brain
+var ai := false                       # demo brain drives the inputs when true
+var ai_level := 1                     # 0 E / 1 N / 2 H / 3 L difficulty knobs                        # P2 demo brain
 var manual_input := false              # external owner feeds ibuf directly
 var _ai_tick := 0
 
@@ -184,6 +189,19 @@ func _physics_process(_delta: float) -> void:
 		stiff_t -= 1
 		queue_redraw()
 		return
+	if frozen:
+		# round-flow lock (announcer cards / round reset): the input ring keeps
+		# ticking so buffered presses survive the intro, everything else pauses
+		queue_redraw()
+		return
+	if break_t > 0:
+		# FM2K throw escape: one grab-button tap inside the window interrupts
+		# the toss both ways (see _do_throw_break)
+		break_t -= 1
+		if ibuf.just_pressed(InputBuffer.B_E):
+			_do_throw_break()
+			queue_redraw()
+			return
 	if state == "IDLE":
 		_poll_idle()
 	elif state == "ACT":
@@ -378,6 +396,15 @@ func _poll_idle() -> void:
 	#    engine basics Weak/Mid/Heavy last as catch-alls)
 	if _try_launch_command():
 		return
+	# 1.5) FM2K guard button: D blocks like holding back; the authored
+	#      buttonGuard builtins carry the pose (fall through when missing)
+	if ibuf.held(InputBuffer.B_D):
+		var m2 := ibuf.axis()
+		var gkey := "buttonGuardAir" if airborne else (
+				"buttonGuardCrouch" if (m2 & InputBuffer.M_DOWN) != 0
+				else "buttonGuardStand")
+		if play_builtin(gkey, true):
+			return
 	# 2) movement, resolved from the buffer's screen-space axis
 	if airborne:
 		play_builtin("falling", true)
@@ -453,20 +480,38 @@ func _poll_cancels() -> void:
 				return
 
 ## Demo brain for P2: writes decision feeds exactly like a human source.
+## Spacing tiers drive it - body adjacency grabs (fwd arrival + E tap in the
+## same frame, the authored "Grab (Right + E)" command), close-range attack
+## mixups, mid-range approach with jump-ins that scale with ai_level, and
+## hold-back guard reactions when the foe's attack comes out. ai_level
+## 0..3 follows the FM2K difficulty feel (E/N/H/L: E guards and grabs least).
+const AI_ATTACKS: Array[int] = [InputBuffer.B_A, InputBuffer.B_B, InputBuffer.B_C]
+
 func _ai_write() -> void:
 	_ai_tick += 1
 	if opp == null:
 		ibuf.set_axis(0)
 		return
 	var dist := absf(opp.pos.x - pos.x)
+	var toward := InputBuffer.M_RIGHT if opp.pos.x > pos.x else InputBuffer.M_LEFT
+	var away := InputBuffer.M_LEFT if toward == InputBuffer.M_RIGHT else InputBuffer.M_RIGHT
+	# guard reaction: the foe's attack is live and reachable - hold back for
+	# a stretch (ai_level scales how often the brain reacts at all)
+	if state == "IDLE" and dist < 130.0 and opp._is_attack_skill():
+		if _ai_tick % 16 < 1 + ai_level:
+			ibuf.set_axis(away)
+			return
 	var m := 0
 	if dist >= 60.0:
-		m = InputBuffer.M_RIGHT if opp.pos.x > pos.x else InputBuffer.M_LEFT
-		if _ai_tick % 233 > 222:
-			m |= InputBuffer.M_UP        # occasional jump toward
+		m = toward
+		if _ai_tick % 233 > 222 - ai_level * 5:
+			m |= InputBuffer.M_UP      # jump-in (higher levels hop more)
+	elif dist < 40.0 and _ai_tick % 37 < 1 + ai_level * 2:
+		m = toward
+		ibuf.press(InputBuffer.B_E)    # grab connect at body adjacency
+	elif dist < 95.0 and _ai_tick % 26 == 0 and randi() % 3 != 0:
+		ibuf.press(AI_ATTACKS[randi() % 3])
 	ibuf.set_axis(m)
-	if _ai_tick % 34 == 0 and dist < 95.0 and randi() % 3 != 0:
-		ibuf.press([InputBuffer.B_A, InputBuffer.B_B, InputBuffer.B_C][randi() % 3])
 
 func _start_jump() -> void:
 	if airborne:
@@ -640,6 +685,7 @@ func _register_throw(victim: Fighter) -> void:
 	victim.meter = minf(victim.meter + meter_max / 12.0, victim.meter_max)
 	var entry: Dictionary = victim.junction_entry(THROW_JUNCTION)
 	victim.enter_thrown(int(entry.get("j", 0)))
+	victim.break_t = THROW_BREAK_TICKS    # victim may tap E to escape the toss
 
 ## FM2K R block: junction index per victim stance. When the victim is
 ## guarding, the guard junctions (gs/gc/ga rows) are used instead of the hit
@@ -671,7 +717,8 @@ func _junction_ref(victim_guard: bool) -> Dictionary:
 func _stance() -> String:
 	if airborne:
 		return "air"
-	var crouches := ["crouching", "midCrouch", "crouchAdvance", "crouchRetreat"]
+	var crouches := ["crouching", "midCrouch", "crouchAdvance", "crouchRetreat",
+			"buttonGuardCrouch"]
 	if crouches.has(_cur_key):
 		return "crouch"
 	return "stand"
@@ -734,11 +781,14 @@ func _is_guarding() -> bool:
 		return false
 	var bck := InputBuffer.M_LEFT if facing > 0 else InputBuffer.M_RIGHT
 	var axis := ibuf.axis()
-	if (axis & bck) == 0:
-		return false
-	if airborne:
-		return (axis & InputBuffer.M_DOWN) == 0
-	return true
+	if (axis & bck) != 0:
+		if airborne:
+			return (axis & InputBuffer.M_DOWN) == 0
+		return true
+	# FM2K guard button: holding D guards like holding back (the buttonGuard
+	# builtins carry the pose through _poll_idle); commands already won if
+	# their dispatch ran, and running skills are excluded above
+	return ibuf.held(InputBuffer.B_D)
 
 ## Victim reaction: play the junction gethit skill (own M-block knockback),
 ## falling back to plain hitstun when the junction has none. Knockdown
@@ -790,6 +840,36 @@ func enter_thrown(gethit_skill_idx: int) -> void:
 	state = "HIT"
 	move = Vector2.ZERO
 	grav = Vector2.ZERO
+
+## FM2K throw escape: the victim taps the grab button inside the break window;
+## junction 96 'Grab Broken' replaces the toss, the attacker's grab skill is
+## cut short, and no damage changes hands.
+func _do_throw_break() -> void:
+	break_t = 0
+	kd_reaction = false
+	wake_pending = false
+	reaction_name = ""
+	var entry := junction_entry(THROW_BREAK_JUNCTION)
+	var s := int(entry.get("j", 0))
+	if s != 0 and skill_by_index.has(s):
+		enter_reaction(s)
+	else:
+		# roster without an authored escape: brief stand-up stun
+		stun_t = 12
+		kd_reaction = false
+		wake_pending = false
+		reaction_name = ""
+		state = "HITSTUN"
+		move = Vector2.ZERO
+		grav = Vector2.ZERO
+	if opp != null:
+		opp.end_grab()
+
+## Broken throw: abort the running grab skill back to the neutral stance so
+## its remaining toss blocks never land.
+func end_grab() -> void:
+	if state == "ACT" and _is_throw_skill():
+		play_builtin("standing", true)
 
 ## Spawn a junction hit spark as a one-shot effect (victim-defined skill).
 func _spawn_spark(spark_skill: int, contact: Vector2, victim: Fighter) -> void:
