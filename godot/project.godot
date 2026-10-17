@@ -5,6 +5,7 @@ config_version=5
 config/name="Aurora FM2K (Godot)"
 run/main_scene="res://scenes/title.tscn"
 config/features=PackedStringArray("4.3")
+config/icon="res://icon.svg"
 
 [autoload]
 Data="*res://scripts/data.gd"

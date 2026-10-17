@@ -97,12 +97,17 @@ jobs:
           if [ ! -f godot/android/build/build.gradle ] && [ -f godot/android/build/build/build.gradle ]; then
             mv godot/android/build/build/* godot/android/build/
           fi
+          # the editor normally writes this marker on template install;
+          # without it the export complains "no version info for it exists"
+          printf "4.3.stable" > godot/android/build/.build_version
           ls godot/android/build | head -20
           test -f godot/android/build/build.gradle || { echo "gradle template missing"; exit 1; }
 
       - name: Import project (full pass - assets become importable resources)
         run: |
           ~/godot-ci/Godot_v4.3-stable_linux.x86_64 --headless --path godot --import 2>&1 | tail -5
+          echo "import sidecar count: $(find godot/data -name '*.import' | wc -l)"
+          test "$(find godot/data -name '*.import' | wc -l)" -gt 10000 || { echo "import did not import the assets - .gdignore present?"; exit 1; }
 
       - name: Export debug APK (gradle build)
         run: |
