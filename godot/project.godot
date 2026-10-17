@@ -23,4 +23,6 @@ window/handheld/orientation=4
 
 [rendering]
 textures/canvas_textures/default_texture_filter=0
+textures/vram_compression/import_etc2_astc=true
+textures/vram_compression/import_s3tc_bptc=true
 environment/defaults/default_clear_color=Color(0.06, 0.06, 0.09, 1)

@@ -76,10 +76,17 @@ static func _abs_data_file(res_rel: String) -> String:
 func tex(res_rel: String) -> Texture2D:
 	if _tex.has(res_rel):
 		return _tex[res_rel]
+	var t: Texture2D = null
+	# dev/editor runs: the raw source png is on disk, decode it directly
 	var img := Image.load_from_file(_abs_data_file(res_rel))
-	if img == null:
-		return null
-	var t := ImageTexture.create_from_image(img)
+	if img != null:
+		t = ImageTexture.create_from_image(img)
+	if t == null:
+		# exported builds: the source png was imported (remapped away), so
+		# load the generated texture resource instead
+		var rl := ResourceLoader.load(DATA_DIR + res_rel, "Texture2D")
+		if rl is Texture2D:
+			t = rl
 	_tex[res_rel] = t
 	return t
 
@@ -93,10 +100,17 @@ func index_images(images: Array) -> Dictionary:
 func wav(res_rel: String) -> AudioStreamWAV:
 	if _wav.has(res_rel):
 		return _wav[res_rel]
+	var s: AudioStreamWAV = null
+	# dev/editor runs: parse the raw file ourselves
 	var f := FileAccess.open(DATA_DIR + res_rel, FileAccess.READ)
-	if f == null:
-		return null
-	var s := _parse_wav(f.get_buffer(f.get_length()))
+	if f != null:
+		s = _parse_wav(f.get_buffer(f.get_length()))
+	if s == null:
+		# exported builds: the wav was imported (or kept raw via the
+		# include filter); fall back to the resource
+		var rl := ResourceLoader.load(DATA_DIR + res_rel, "AudioStreamWAV")
+		if rl is AudioStreamWAV:
+			s = rl
 	if s != null:
 		_wav[res_rel] = s
 	return s
