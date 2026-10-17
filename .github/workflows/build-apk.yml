@@ -1,0 +1,141 @@
+name: build-apk
+
+# Builds the Android debug APK in the cloud (no local Android SDK needed)
+# and attaches it to a GitHub Release so the build can be device-tested.
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      GODOT_VERSION: "4.3-stable"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17 (AGP 8 needs it)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Cache Godot editor + export templates
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/godot-ci
+            ~/.local/share/godot/export_templates
+          key: godot-4.3-stable
+
+      - name: Download Godot editor + export templates
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/godot-ci ~/.local/share/godot/export_templates/4.3.stable
+          cd ~/godot-ci
+          curl -fsSLo godot.zip "https://github.com/godotengine/godot/releases/download/4.3-stable/Godot_v4.3-stable_linux.x86_64.zip"
+          unzip -q godot.zip
+          chmod +x Godot_v4.3-stable_linux.x86_64
+          curl -fsSLo templates.tpz "https://github.com/godotengine/godot/releases/download/4.3-stable/Godot_v4.3-stable_export_templates.tpz"
+          unzip -q templates.tpz                   # -> templates/
+          mv templates/* ~/.local/share/godot/export_templates/4.3.stable/
+          ls ~/.local/share/godot/export_templates/4.3.stable | head
+
+      - name: Generate debug keystore (standard androiddebugkey creds)
+        run: |
+          keytool -genkeypair -v -keystore debug.keystore \
+            -storepass android -alias androiddebugkey -keypass android \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname "CN=Android Debug,O=Android,C=US"
+
+      - name: Patch export preset (CI signing + APK format)
+        run: |
+          python3 - <<'PY'
+          import os
+          ws = os.environ['GITHUB_WORKSPACE']
+          p = os.path.join(ws, 'godot', 'export_presets.cfg')
+          s = open(p, encoding='utf-8').read()
+          if 'gradle_build/use_gradle_build=false' in s:
+              s = s.replace('gradle_build/use_gradle_build=false',
+                            'gradle_build/use_gradle_build=true')
+          ks = os.path.join(ws, 'debug.keystore')
+          extra = [
+              'keystore/debug="%s"' % ks,
+              'keystore/debug_user="androiddebugkey"',
+              'keystore/debug_password="android"',
+          ]
+          have = set(x.split('=')[0] + '=' for x in s.splitlines())
+          for line in extra:
+              if line.split('=')[0] + '=' not in have:
+                  s = s.replace('[preset.0.options]',
+                                '[preset.0.options]\n' + line, 1)
+          if 'gradle_build/export_format' not in s:
+              s = s.replace('[preset.0.options]',
+                            '[preset.0.options]\ngradle_build/export_format=0', 1)
+          open(p, 'w', encoding='utf-8').write(s)
+          print(open(p).read())
+          PY
+
+      - name: Import (class cache only - keep compiled assets raw in the pack)
+        run: |
+          # the game reads PNG/WAV with raw FileAccess, so the pack must keep
+          # the source files: shadow the asset dirs from the importer while
+          # the one-time --import builds the GDScript class cache, then
+          # unshadow and drop any stray sidecars before exporting
+          touch godot/data/assets/.gdignore
+          ~/godot-ci/Godot_v4.3-stable_linux.x86_64 --headless --path godot --import 2>&1 | tail -5
+          rm godot/data/assets/.gdignore
+          find godot/data -name "*.import" -delete || true
+          rm -rf godot/.godot/imported || true
+
+      - name: Export debug APK (gradle build)
+        run: |
+          set -o pipefail
+          ~/godot-ci/Godot_v4.3-stable_linux.x86_64 --headless --path godot \
+            --export-debug "Android" aurora-v0.9.0-debug.apk 2>&1 | tee export.log | tail -20
+          ls -lh aurora-v0.9.0-debug.apk
+
+      - name: Sanity-check the pack kept the raw assets
+        run: |
+          unzip -o -q aurora-v0.9.0-debug.apk "assets/*.pck" -d apkslice
+          PCK=$(find apkslice -name "*.pck" | head -1)
+          ls -lh "$PCK"
+          if grep -aq "data/assets/options/img/0008.png" "$PCK"; then
+            echo "RAW-ASSETS-IN-PCK: yes"
+          else
+            echo "RAW-ASSETS-IN-PCK: MISSING - the pack dropped the raw data"
+            strings "$PCK" | grep -c "data/assets" || true
+            exit 1
+          fi
+
+      - name: Upload APK artifact (always, for quick grab)
+        uses: actions/upload-artifact@v4
+        with:
+          name: aurora-apk-debug
+          path: aurora-v0.9.0-debug.apk
+          if-no-files-found: error
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: export-log
+          path: export.log
+          if-no-files-found: ignore
+
+      - name: Attach APK to the v0.9.0 release
+        run: |
+          gh release create v0.9.0 aurora-v0.9.0-debug.apk \
+            --title "Aurora FM2K Godot v0.9.0" \
+            --notes "Android debug APK of the FM2K Godot bridge (v0.9 shell: authentic training/pause menu, training toggles, command-list cards, per-stage BGM). Debug-signed (install over any prior debug build only). Source: main @ $GITHUB_SHA." \
+            || gh release upload v0.9.0 aurora-v0.9.0-debug.apk --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
