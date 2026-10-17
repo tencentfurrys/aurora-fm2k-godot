@@ -82,6 +82,7 @@ var _audio: AudioStreamPlayer
 func _ready() -> void:
 	_spr = Sprite2D.new()
 	_spr.centered = true
+	_spr.scale = Vector2(0.5, 0.5)     # FM2K canvas-px art on a 320-unit canvas
 	_spr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	add_child(_spr)
 	_audio = AudioStreamPlayer.new()
@@ -586,8 +587,9 @@ func _update_sprite() -> void:
 	_spr.flip_h = flip_by_facing != flip_frame
 	_spr.flip_v = bool(fr.get("fy", false))
 	var mirrored_x := -float(fr["x"]) if facing == -1 else float(fr["x"])
-	# canvas center sits GROUND_TO_ANCHOR above the ground line (node origin)
-	_spr.position = Vector2(mirrored_x, float(fr["y"]) - GROUND_TO_ANCHOR)
+	# canvas center sits GROUND_TO_ANCHOR above the ground line (node origin);
+	# fr x/y and the anchor live on the FM2K px canvas, drawn at half scale
+	_spr.position = Vector2(mirrored_x * 0.5, (float(fr["y"]) - GROUND_TO_ANCHOR) * 0.5)
 
 # ------------------------------------------------------------------- combat
 ## FD slot rects. kind: "col" attack/solid, "dmg" hurt, "thr" throw.

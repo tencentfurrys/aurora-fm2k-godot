@@ -73,22 +73,42 @@ func load_json(res_path: String) -> Variant:
 static func _abs_data_file(res_rel: String) -> String:
 	return ProjectSettings.globalize_path(DATA_DIR + res_rel)
 
-func tex(res_rel: String) -> Texture2D:
-	if _tex.has(res_rel):
-		return _tex[res_rel]
+func tex(res_rel: String, key_black: bool = true) -> Texture2D:
+	var cache_key: String = res_rel + ("|k" if key_black else "")
+	if _tex.has(cache_key):
+		return _tex[cache_key]
 	var t: Texture2D = null
 	# dev/editor runs: the raw source png is on disk, decode it directly
 	var img := Image.load_from_file(_abs_data_file(res_rel))
 	if img != null:
+		if key_black:
+			img = _key_black(img)
 		t = ImageTexture.create_from_image(img)
 	if t == null:
 		# exported builds: the source png was imported (remapped away), so
-		# load the generated texture resource instead
+		# load the generated texture resource instead - the imported copy is
+		# baked with the same black backing, so key it the same way
 		var rl := ResourceLoader.load(DATA_DIR + res_rel, "Texture2D")
 		if rl is Texture2D:
 			t = rl
-	_tex[res_rel] = t
+			if key_black:
+				var im: Image = t.get_image()
+				if im != null:
+					if im.is_compressed():
+						im.decompress()
+					t = ImageTexture.create_from_image(_key_black(im))
+	_tex[cache_key] = t
 	return t
+
+## Alpha-key every pure-black pixel (FM2K palette index 0 is the transparent
+## key at draw time; the RGB8 dumps flattened it to opaque black).
+func _key_black(img: Image) -> Image:
+	img.convert(Image.FORMAT_RGBA8)
+	var d := img.get_data()
+	for i in range(0, d.size(), 4):
+		if d[i] == 0 and d[i + 1] == 0 and d[i + 2] == 0:
+			d[i + 3] = 0
+	return Image.create_from_data(img.get_width(), img.get_height(), false, Image.FORMAT_RGBA8, d)
 
 func index_images(images: Array) -> Dictionary:
 	var out := {}

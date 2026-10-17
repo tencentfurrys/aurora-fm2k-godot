@@ -70,6 +70,8 @@ var _prompt_bar: Sprite2D           # 0008 legend band (hidden on the card page)
 var _blip: AudioStreamPlayer
 var _bgm: AudioStreamPlayer         # stage BGM wav (each compiled stage ships one)
 var _bgm_file := ""
+var _stage_layers: Array[Dictionary] = []    # parallax + scroll layer knobs
+var _cam: Camera2D                           # FM2K camera squared on the pair
 var _menu_prev_axis := 0
 var touch_pad: Variant = null       # virtual FM2K touch overlay
 var _end_t := 0                      # end-phase counter (victory pose settle)
@@ -96,6 +98,7 @@ func _ready() -> void:
 	_card_layer.add_child(_flash)
 	_card_sprite = Sprite2D.new()
 	_card_sprite.centered = false
+	_card_sprite.scale = Vector2(0.5, 0.5)   # KGT art lives on a 640x480 canvas
 	_card_sprite.visible = false
 	_card_layer.add_child(_card_sprite)
 
@@ -415,6 +418,12 @@ func _chain_done() -> void:
 			_finish_round()
 
 # ------------------------------------------------------------------ stage
+## FM2K stage-px -> bridge canvas: every layer draws at half scale and stage
+## y 0 maps to canvas y -146, so the bank's ground line (stage y 692) lands
+## exactly on the fighters' ground line (0.5 * 692 - 146 = GROUND_Y).
+const STAGE_SCALE := 0.5
+const STAGE_Y0 := -146.0
+
 func _build_stage(st: String) -> void:
 	var slug := Fighter._slug(st)
 	var data: Variant = Data.load_json("res://data/stages/%s.json" % slug)
@@ -424,23 +433,69 @@ func _build_stage(st: String) -> void:
 	var snds: Array = (data.get("sounds", []) as Array)
 	if snds.size() > 0:
 		_bgm_file = String((snds[0] as Dictionary).get("file", ""))
-	var chosen: Dictionary = {}
-	for im in data.get("images", []):
-		if int(im["w"]) > 0 and int(im["h"]) > 0:
-			chosen = im
-			break
-	if chosen.is_empty():
-		return
-	var t := Data.tex(String(chosen["file"]))
-	if t == null:
-		return
-	var bg := Sprite2D.new()
-	bg.texture = t
-	bg.centered = true
-	bg.position = Vector2(160, 120)
-	bg.z_index = 0
-	bg.scale = Vector2(320.0 / float(chosen["w"]), 240.0 / float(chosen["h"]))
-	add_child(bg)
+	# FM2K stages are layer strips composed by the kgt's auxiliary skills:
+	# sky, hills, ground, houses, floating islands, per-layer ambient scroll
+	# moves... draw every named layer bottom-up in skill order, skipping the
+	# engine placeholder skills. Parallax weights come from the parsed
+	# bank settings (stage_parallax.json): w/100 = how much of the camera
+	# motion the layer shares (0 = glued to the view, 100 = glued to the
+	# world, like the floor).
+	var imgs: Dictionary = Data.index_images(data.get("images", []))
+	var plx: Variant = Data.load_json("res://data/stage_parallax.json")
+	var plx_map: Dictionary = (plx.get(slug, {}) if plx != null else {}) as Dictionary
+	_stage_layers = []
+	var left := 1e9
+	var right := -1e9
+	var z := -100
+	for sk in data.get("skills", []):
+		var lname: String = String(sk.get("n", ""))
+		if lname == "" or lname.begins_with("--") or lname.begins_with("Player Layers"):
+			continue
+		var wh: Array = (plx_map.get(lname, [100, 100]) as Array)
+		var pw := float(wh[0]) / 100.0
+		for fr in sk.get("frames", []):
+			var meta: Dictionary = imgs.get(int(fr["i"]), {})
+			if meta.is_empty():
+				continue
+			var t: Texture2D = Data.tex(String(meta["file"]))
+			if t == null:
+				continue
+			var spr := Sprite2D.new()
+			spr.texture = t
+			spr.centered = false
+			spr.z_index = z
+			z += 1
+			spr.position = Vector2(float(fr["x"]) * STAGE_SCALE,
+					float(fr["y"]) * STAGE_SCALE + STAGE_Y0)
+			add_child(spr)
+			var w_scaled := maxf(float(meta["w"]) * STAGE_SCALE, 1.0)
+			var h_scaled := maxf(float(meta["h"]) * STAGE_SCALE, 1.0)
+			left = minf(left, spr.position.x)
+			right = maxf(right, spr.position.x + w_scaled)
+			var entry: Dictionary = {
+				"spr": spr,
+				"base_x": spr.position.x,
+				"base_y": spr.position.y,
+				"pw": pw,
+			}
+			var moves: Array = (sk.get("moves", []) as Array)
+			if moves.size() > 0:
+				var mv: Dictionary = moves[0]
+				# ambient drift: FM2K mx/my are px per second-ish; slow them
+				entry["mx"] = float(mv.get("mx", 0)) * STAGE_SCALE / 60.0
+				entry["my"] = float(mv.get("my", 0)) * STAGE_SCALE / 60.0
+				entry["tw"] = w_scaled
+				entry["th"] = h_scaled
+			_stage_layers.append(entry)
+	# camera pans with the fighters, clamped to the composed stage bounds
+	_cam = Camera2D.new()
+	_cam.limit_left = mini(0, int(left)) if left <= right else 0
+	_cam.limit_right = maxi(320, int(round(right))) if right > -1e8 else 640
+	_cam.limit_top = 0
+	_cam.limit_bottom = 240
+	_cam.position = Vector2(160, 120)
+	add_child(_cam)
+	_cam.make_current()
 
 ## Stage BGM playback (each compiled stage ships one wav): FM2K restarts the
 ## track at every round and fades nothing — play from the round begin.
@@ -846,6 +901,30 @@ func _process(_delta: float) -> void:
 		_hold -= 1
 		if _hold == 0:
 			_chain_done()
+
+	# FM2K camera: pan with the pair, keep the composed stage in frame
+	var pan := 0.0
+	if _cam != null and p1 != null and p2 != null:
+		_cam.position.x = clampf((p1.pos.x + p2.pos.x) * 0.5,
+				_cam.limit_left + 160.0,
+				maxf(_cam.limit_left + 160.0, _cam.limit_right - 160.0))
+		_cam.position.y = 120
+		pan = _cam.position.x - 160.0
+	# per-layer parallax (share of camera motion) + ambient drift, wrapped
+	for sc in _stage_layers:
+		sc["tick"] = int(sc.get("tick", 0)) + 1
+		var spr: Sprite2D = sc["spr"]
+		var px: float = sc["base_x"] + pan * (1.0 - float(sc["pw"]))
+		var py: float = sc["base_y"]
+		var mx := float(sc.get("mx", 0.0))
+		var my := float(sc.get("my", 0.0))
+		if mx != 0.0 or my != 0.0:
+			var tt := float(int(sc["tick"]))
+			if mx != 0.0:
+				px += fposmod(tt * mx, float(sc["tw"]))
+			if my != 0.0:
+				py += fposmod(tt * my, float(sc["th"]))
+		spr.position = Vector2(px, py)
 
 	if _bar1 == null or p1 == null:
 		return
